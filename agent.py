@@ -85,18 +85,19 @@ class Agent:
 
                 if is_training:
                     # Storing experience in replay memory
-                    memory.add((state, action, new_state, info.get('next_observation'), terminated))
+                    memory.add((state, action, new_state, reward, terminated))
                     step_count += 1
 
                 # Updating state
                 state = new_state
 
-                if len(self) > self.batch_size:
+                if len(memory) > self.batch_size:
                     # Sample a batch of experiences from replay memory
                     mini_batch = memory.sample(self.batch_size)
                     # Here you would typically process the experiences and update the policy network
                     self.optimize(policy_net, target_DQN, mini_batch)
 
+                    #copy policy network weights to target network after certain number of steps
                     if step_count > self.network_update_frequency:
                         target_DQN.load_state_dict(policy_net.state_dict())
                         step_count = 0
@@ -104,23 +105,30 @@ class Agent:
 
     def optimize(self, policy_net, target_DQN, mini_batch):
         
-        for state, action, next_state, reward, terminated in mini_batch:
+        states, actions, new_states, rewards, terminated = zip(*mini_batch)
 
-            if terminated:
-                target = reward
-            else:
-                with torch.no_grad():
-                    target = reward + self.discount_factor * target_DQN(next_state).max()
+        states = torch.stack(states)
 
-            current_q_value = policy_net(state)
+        actions = torch.tensor(actions).to(device)
 
-            #calculate loss
-            loss = self.loss_fn(current_q_value, target)
+        new_states = torch.stack(new_states)
 
-            #optimize the model 
-            self.optimizer.zero_grad()      #clear previous gradients
-            loss.backward()                 #backpropagate the loss
-            self.optimizer.step()           #update the model parameters i.e. weights and biases
+        rewards = torch.stack(rewards)
+
+        terminated = torch.tensor(terminated).float().to(device)
+
+        with torch.no_grad():
+            target_q = rewards + (1-terminated) * self.discount_factor * target_DQN(new_states).max(1)[0]
+
+        current_q_value = policy_net(states).gather(1, actions.unsqueeze(1)).squeeze()
+
+        #calculate loss
+        loss = self.loss_fn(current_q_value, target_q)
+
+        #optimize the model 
+        self.optimizer.zero_grad()      #clear previous gradients
+        loss.backward()                 #backpropagate the loss
+        self.optimizer.step()           #update the model parameters i.e. weights and biases
 
 
 if __name__ == "__main__":
